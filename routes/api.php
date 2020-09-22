@@ -1,8 +1,14 @@
 <?php
 
-use danog\MadelineProto\API as MLAPI;
+//use danog\MadelineProto\API as MLAPI;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
+
+
+//if (!file_exists('madeline.php')) {
+//    copy('https://phar.madelineproto.xyz/madeline.php', 'madeline.php');
+//}
+//include 'madeline.php';
 
 /*
 |--------------------------------------------------------------------------
@@ -23,6 +29,10 @@ Route::middleware('auth:api')->get('/user', function (Request $request) {
 
 Route::get('/hello', function (){
    return database_path('madeline-sessions'). DIRECTORY_SEPARATOR;
+});
+
+Route::get('/phones', function (){
+   return \App\PhoneNumber::all();
 });
 
 Route::any('/channel/get-messages/{channel}', function($channel){
@@ -111,8 +121,8 @@ Route::get('/tg/{phone_number}/login', function($phone_number){
     $session_file = database_path('madeline-sessions').
         DIRECTORY_SEPARATOR .
         $phoneNumber->session_name;
-    $MadelineProto = new MLAPI($session_file, $settings);
-
+    $MadelineProto = new \danog\MadelineProto\API($session_file, $settings);
+    $MadelineProto->async(false);
     $MadelineProto->phoneLogin('+' . $phoneNumber->phone_number);
 
     $phoneNumber->status = 'waiting-for-verification-code';
@@ -120,6 +130,28 @@ Route::get('/tg/{phone_number}/login', function($phone_number){
 
     return ['status'=>'start'];
 })->where('number', '[1-9][0-9]{11}');
+
+
+Route::get('tg/login2', function(){
+
+    $settings = [
+        'app_info' => [ // Authorization settings
+            'api_id' => 1099278,
+            'api_hash' => 'e38f6507b19ae2fcb94a660f927b94a0',
+            'device_model'=>'Desktop',
+            'system_version'=>'18.0.4',
+            'app_version'=>'1.0',
+            'lang_code'=>'en',
+        ]
+    ];
+    $wrapper = new \danog\MadelineProto\MyTelegramOrgWrapper($settings);
+    $wrapper->async(true);
+    yield $wrapper->phoneLogin('+989038082327');
+    return $settings;
+
+//    return response('ok');
+
+});
 
 Route::get('/tg/{phone_number}/complete-login/{code}', function($phone_number, $code){
 
@@ -144,7 +176,7 @@ Route::get('/tg/{phone_number}/complete-login/{code}', function($phone_number, $
         DIRECTORY_SEPARATOR .
         $phoneNumber->session_name;
 
-    $MadelineProto = new MLAPI($session_file, $settings);
+    $MadelineProto = new \danog\MadelineProto\API($session_file, $settings);
 
     $authorization = $MadelineProto->completePhoneLogin($code);
     $MadelineProto->serialize();
@@ -158,6 +190,7 @@ Route::get('/tg/{phone_number}/complete-login/{code}', function($phone_number, $
     }
 
     $phoneNumber->status = 'active';
+    $phoneNumber->login_at = date('Y-m-d H:i:s');
     $phoneNumber->save();
 
     return ['status'=>'ok'];
@@ -187,7 +220,7 @@ Route::get('/tg/{phone_number}/get-myself-info', function($phone_number){
         DIRECTORY_SEPARATOR .
         $phoneNumber->session_name;
 
-    $MadelineProto = new MLAPI($session_file, $settings);
+    $MadelineProto = new \danog\MadelineProto\API($session_file, $settings);
 
     //Gets info about the currently logged-in user.
     return $MadelineProto->getSelf();
@@ -217,7 +250,7 @@ Route::get('/tg/{phone_number}/channels', function($phone_number){
         DIRECTORY_SEPARATOR .
         $phoneNumber->session_name;
 
-    $MadelineProto = new MLAPI($session_file, $settings);
+    $MadelineProto = new \danog\MadelineProto\API($session_file, $settings);
 
     //get list of all channels, groups, chats, ...
     $r = $MadelineProto->getDialogs();
@@ -235,6 +268,63 @@ Route::get('/tg/{phone_number}/channels', function($phone_number){
     }
     return $channels;
 })->where(['phone_number'=> '[1-9][0-9]{11}']);
+
+function mbStrlen($text)
+{
+    $length = 0;
+    $textlength = \strlen($text);
+    for ($x = 0; $x < $textlength; $x++) {
+        $char = \ord($text[$x]);
+        if (($char & 0xC0) != 0x80) {
+            $length += 1 + ($char >= 0xf0);
+        }
+    }
+    return $length;
+}
+//function mb_substr_replace($text, $replacement, $offset, $length = null)
+//{
+//    $result = '';
+//    if($offset>0){
+//        $result = mbSubstr($text, 0, $length-1);
+//    }
+//    echo "$result<br>";
+//    $result .= $replacement;
+//    if($length != null){
+//        $result .= mbSubstr($text, $offset+$length+1);
+//    }
+//    return $result;
+//}
+function mbSubstr($text, $offset, $length = null)
+{
+    $mb_text_length = mbStrlen($text);
+    if ($offset < 0) {
+        $offset = $mb_text_length + $offset;
+    }
+    if ($length < 0) {
+        $length = ($mb_text_length - $offset) + $length;
+    } elseif ($length === null) {
+        $length = $mb_text_length - $offset;
+    }
+    $new_text = '';
+    $current_offset = 0;
+    $current_length = 0;
+    $text_length = \strlen($text);
+    for ($x = 0; $x < $text_length; $x++) {
+        $char = \ord($text[$x]);
+        if (($char & 0xC0) != 0x80) {
+            $current_offset += 1 + ($char >= 0xf0);
+            if ($current_offset > $offset) {
+                $current_length += 1 + ($char >= 0xf0);
+            }
+        }
+        if ($current_offset > $offset) {
+            if ($current_length <= $length) {
+                $new_text .= $text[$x];
+            }
+        }
+    }
+    return $new_text;
+}
 
 Route::any('/tg/{phone_number}/channels/{input_channel}/messages/{offset}/{limit}', function($phone_number, $input_channel, $limit, $offset){
 
@@ -259,7 +349,7 @@ Route::any('/tg/{phone_number}/channels/{input_channel}/messages/{offset}/{limit
         DIRECTORY_SEPARATOR .
         $phoneNumber->session_name;
 
-    $MadelineProto = new MLAPI($session_file, $settings);
+    $MadelineProto = new \danog\MadelineProto\API($session_file, $settings);
 
     $offset = 0;
     $limit = 30;

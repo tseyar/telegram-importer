@@ -15,6 +15,10 @@ Route::get('/', function () {
     return view('welcome');
 });
 
+Route::get('/layout', function (){
+    return view('layouts.layout');
+});
+
 Auth::routes();
 function mb_substr_replace ($string, $replacement, $start, $length = 0)
 {
